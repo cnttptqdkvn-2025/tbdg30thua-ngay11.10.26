@@ -237,6 +237,16 @@
     color:var(--ink-muted);
     word-break:break-all;
   }
+  .card .dates{
+    font-size:12.5px;
+    color:var(--ink);
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+    padding-top:4px;
+    border-top:1px solid var(--line);
+  }
+  .card .dates-label{color:var(--ink-muted);}
   .card .open-link{
     margin-top:auto;
     padding-top:8px;
@@ -530,17 +540,32 @@
     return d.toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit", year: "numeric" });
   }
 
-  async function fetchTitle(name){
+  function extractMetaTag(text, metaName){
+    const tagRe = new RegExp("<meta[^>]*name=[\"']" + metaName + "[\"'][^>]*>", "i");
+    const tag = text.match(tagRe);
+    if(!tag) return null;
+    const contentMatch = tag[0].match(/content=["']([^"']*)["']/i);
+    return contentMatch ? contentMatch[1].trim() : null;
+  }
+
+  async function fetchFileMeta(name){
     const rawUrl = "https://raw.githubusercontent.com/" + CONFIG.owner + "/" + CONFIG.repo + "/" +
       CONFIG.branch + "/" + folderPrefix() + name;
     try{
       const res = await fetch(rawUrl, { headers: { "Range": "bytes=0-6000" } });
-      if(!res.ok && res.status !== 206) return null;
+      if(!res.ok && res.status !== 206) return {};
       const text = await res.text();
-      const m = text.match(/<title[^>]*>([^<]*)<\/title>/i);
-      return m ? m[1].trim() : null;
+      const titleMatch = text.match(/<title[^>]*>([^<]*)<\/title>/i);
+      return {
+        title: titleMatch ? titleMatch[1].trim() : null,
+        // Quy ước: mỗi file thông báo có thể khai báo 2 thẻ meta trong <head> để hub hiển thị:
+        // <meta name="auction-date" content="08:00, 11/10/2026">
+        // <meta name="deadline" content="17:30, 07/10/2026">
+        auctionDate: extractMetaTag(text, "auction-date"),
+        deadline: extractMetaTag(text, "deadline")
+      };
     }catch(e){
-      return null;
+      return {};
     }
   }
 
@@ -570,18 +595,20 @@
         it.name.toLowerCase() !== CONFIG.selfFilename.toLowerCase();
     });
 
-    const withTitles = await Promise.all(htmlFiles.map(async function(f){
-      const title = await fetchTitle(f.name);
+    const withMeta = await Promise.all(htmlFiles.map(async function(f){
+      const meta = await fetchFileMeta(f.name);
       return {
         name: f.name,
-        title: title || guessTitleFromFilename(f.name),
+        title: meta.title || guessTitleFromFilename(f.name),
+        auctionDate: meta.auctionDate || null,
+        deadline: meta.deadline || null,
         sha: f.sha,
         size: f.size
       };
     }));
 
-    withTitles.sort(function(a, b){ return a.title.localeCompare(b.title, "vi"); });
-    return withTitles;
+    withMeta.sort(function(a, b){ return a.title.localeCompare(b.title, "vi"); });
+    return withMeta;
   }
 
   function render(apps, opts){
@@ -629,6 +656,12 @@
         (opts.showNewBadge && app._isNew ? '<span class="badge-new">Mới</span>' : "") +
         "<h2>" + escapeHtml(app.title) + "</h2>" +
         "<div class=\"filename\">" + escapeHtml(app.name) + "</div>" +
+        ((app.auctionDate || app.deadline)
+          ? "<div class=\"dates\">" +
+              (app.auctionDate ? "<div><span class=\"dates-label\">Ngày đấu giá:</span> " + escapeHtml(app.auctionDate) + "</div>" : "") +
+              (app.deadline ? "<div><span class=\"dates-label\">Hạn nộp hồ sơ:</span> " + escapeHtml(app.deadline) + "</div>" : "") +
+            "</div>"
+          : "") +
         "<div class=\"card-actions\">" +
           "<a class=\"open-link\" href=\"" + escapeHtml(appHref(app.name)) + "\" target=\"_blank\" rel=\"noopener\">Mở ứng dụng →</a>" +
           (canDelete
